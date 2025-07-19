@@ -134,5 +134,5 @@ dmypy.json
 # pytype static type analyzer
 .pytype/
 
-
-
+ckpt 
+data/re10k_subset
