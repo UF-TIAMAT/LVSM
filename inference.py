@@ -30,11 +30,14 @@ amp_dtype_mapping = {
 }
 
 
-# Load data
+# Load dataß
 dataset_name = config.training.get("dataset_name", "data.dataset.Dataset")
 module, class_name = dataset_name.rsplit(".", 1)
 Dataset = importlib.import_module(module).__dict__[class_name]
 dataset = Dataset(config)
+
+# NOTE: Otherwise the evaluation will get skipped as we are only using single example
+config.training.batch_size_per_gpu = 1
 
 datasampler = DistributedSampler(dataset)
 dataloader = DataLoader(
