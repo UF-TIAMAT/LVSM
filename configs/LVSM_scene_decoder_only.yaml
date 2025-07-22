@@ -30,7 +30,7 @@ training:
   checkpoint_dir: ./experiments/checkpoints/LVSM_scene_decoder_only
   checkpoint_every: 2000
   dataset_name: data.dataset_scene.Dataset
-  dataset_path: ./data/re10k_subset/re10_subset_processed/test/full_list.txt
+  dataset_path: ./data/habitat_eval/full_list.txt
   grad_accum_steps: 1
   grad_checkpoint_every: 1
   grad_clip_norm: 1.0
@@ -73,7 +73,7 @@ training:
 inference:
   if_inference: False
   compute_metrics: False
-  view_idx_file_path: ./data/re10k_subset/evaluation_index_re10k_subset.json
+  view_idx_file_path: ./data/habitat_eval/evaluation_index_habitat_eval.json
   render_video: True
   render_video_config:
     traj_type: interpolate

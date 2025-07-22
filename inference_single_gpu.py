@@ -2,6 +2,7 @@ import torch
 import importlib
 from setup import init_config
 from torch.utils.data import DataLoader
+from PIL import Image
 
 config = init_config()
 amp_dtype_mapping = {
@@ -36,6 +37,8 @@ LVSM = importlib.import_module(module).__dict__[class_name]
 model = LVSM(config).to(device)
 model.load_ckpt(config.training.checkpoint_dir)
 
+out_dir = "/blue/prabhat/duminduaelamurem/wd/repo_tests/aaai/LVSM/data/habitat_eval/out"
+
 with torch.no_grad(), torch.autocast(
     enabled=config.training.use_amp,
     device_type="cuda",
@@ -45,3 +48,12 @@ with torch.no_grad(), torch.autocast(
     for batch in dataloader:
         batch = {k: v.to(device) if type(v) == torch.Tensor else v for k, v in batch.items()}
         result = model(batch)
+        print("Infering this batch")
+
+        imgs = result["render"].squeeze(0)
+        for i, img in enumerate(imgs):
+            img = (img.permute(1, 2, 0).float().cpu().numpy() * 255).astype("uint8")
+            img_pil = Image.fromarray(img)
+            img_pil.save(f"{out_dir}/output_{i}.png")
+
+print("Inference completed successfully.")
