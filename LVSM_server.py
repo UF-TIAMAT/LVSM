@@ -7,6 +7,13 @@ import numpy as np
 import requests
 import cv2
 import base64
+from flask import Flask, jsonify, request
+import torch
+import importlib
+from setup import init_config
+from torch.utils.data import DataLoader
+from PIL import Image
+from omegaconf import OmegaConf
 
 
 class ServerMixin:
@@ -15,6 +22,19 @@ class ServerMixin:
 
     def process_payload(self, payload: dict) -> dict:
         raise NotImplementedError
+    
+def host_model(model: Any, name: str, port: int = 5000) -> None:
+    """
+    Hosts a model as a REST API using Flask.
+    """
+    app = Flask(__name__)
+
+    @app.route(f"/{name}", methods=["POST"])
+    def process_request() -> Dict[str, Any]:
+        payload = request.json
+        return jsonify(model.process_payload(payload))
+
+    app.run(host="localhost", port=port)
 
 def send_request(url: str, **kwargs: Any) -> dict:
     response = {}
@@ -37,7 +57,6 @@ def image_to_str(img_np: np.ndarray, quality: float = 90.0) -> str:
     retval, buffer = cv2.imencode(".jpg", img_np, encode_param)
     img_str = base64.b64encode(buffer).decode("utf-8")
     return img_str
-
 
 def _send_request(url: str, **kwargs: Any) -> dict:
     lockfiles_dir = "lockfiles"
@@ -120,10 +139,73 @@ def _send_request(url: str, **kwargs: Any) -> dict:
 class LVSMModel:
 
     def __init__(self):
-        pass
+        self.config = OmegaConf.load("configs/LVSM_scene_decoder_only.yaml")
+        self.amp_dtype_mapping = {
+            "fp16": torch.float16, 
+            "bf16": torch.bfloat16, 
+            "fp32": torch.float32, 
+            'tf32': torch.float32
+        }
 
-    def generate_novel_views():
-        pass
+        # Manual parameters.
+        self.config.training.dataset_path="./data/habitat_eval/full_list.txt"
+        self.config.training.batch_size_per_gpu=1
+        self.config.training.target_has_input=False
+        self.config.training.num_views=5
+        self.config.training.square_crop=True
+        self.config.training.num_input_views=2
+        self.config.training.num_target_views=3
+        self.config.inference.if_inference=True
+        self.config.inference.compute_metrics=True
+        self.config.inference.render_video=True
+        self.config.inference_out_dir="./experiments/evaluation/test"
+
+        dataset_name =  self.config.training.get("dataset_name", "data.dataset.Dataset")
+        module, class_name = dataset_name.rsplit(".", 1)
+        Dataset = importlib.import_module(module).__dict__[class_name]
+        dataset = Dataset( self.config)
+
+        self.config.training.batch_size_per_gpu = 1
+
+        self.dataloader = DataLoader(
+            dataset,
+            batch_size= self.config.training.batch_size_per_gpu,
+            shuffle=False,
+            num_workers= self.config.training.num_workers,
+            prefetch_factor= self.config.training.prefetch_factor,
+            persistent_workers=True,
+            pin_memory=False,
+            drop_last=True,
+        )
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        module, class_name =  self.config.model.class_name.rsplit(".", 1)
+        LVSM = importlib.import_module(module).__dict__[class_name]
+        self.model = LVSM( self.config).to(self.device)
+        self.model.load_ckpt( self.config.training.checkpoint_dir)
+
+        self.out_dir = "/blue/prabhat/duminduaelamurem/wd/repo_tests/aaai/LVSM/data/habitat_eval/out"
+
+    def generate_novel_views(self):
+        with torch.no_grad(), torch.autocast(
+            enabled= self.config.training.use_amp,
+            device_type="cuda",
+            dtype=self.amp_dtype_mapping[ self.config.training.amp_dtype],
+        ):
+            
+            for batch in self.dataloader:
+                batch = {k: v.to(self.device) if type(v) == torch.Tensor else v for k, v in batch.items()}
+                result = self.model(batch)
+                print("Infering this batch")
+
+                imgs = result["render"].squeeze(0)
+                for i, img in enumerate(imgs):
+                    img = (img.permute(1, 2, 0).float().cpu().numpy() * 255).astype("uint8")
+                    img_pil = Image.fromarray(img)
+                    img_pil.save(f"{self.out_dir}/output_{i}.png") 
+
+        return {"status": "Inference completed successfully."}
 
 class LVSMModelClient:
     def __init__(self, port: int = 12200):
@@ -135,25 +217,23 @@ class LVSMModelClient:
         return response["response"]
 
 
+if __name__ == "__main__":
+    import argparse
 
-# if __name__ == "__main__":
-    # import argparse
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=12200)
+    args = parser.parse_args()
 
-    # parser = argparse.ArgumentParser()
-    # parser.add_argument("--port", type=int, default=12200)
-    # args = parser.parse_args()
+    print("Loading model...")
 
-    # print("Loading model...")
-    # model = LVSM(config).to(device)
-    # model.load_ckpt(config.training.checkpoint_dir)
+    class LVSMModelServer(ServerMixin, LVSMModel):
+        def process_payload(self, payload: dict) -> dict:
+            print(f"LVSMModelServer.process_payload: {payload}")
+            self.generate_novel_views()
+            return {"response": "Novel views generated successfully."}
 
-    # print("Starting inference...")
-    # with torch.no_grad(), torch.autocast(
-    #     enabled=config.training.use_amp,
-    #     device_type="cuda",
-    #     dtype=amp_dtype_mapping[config.training.amp_dtype],
-    # ):
-    #     for batch in dataloader:
-    #         batch = {k: v.to(device) if isinstance(v, torch.Tensor) else v for k, v in batch.items()}
-    #         result = model(batch)
-    #         # Process result as needed
+
+    lvsm = LVSMModelServer()
+    print("Model loaded successfully.")
+    print(f"Hosting model on port {args.port}...")
+    host_model(lvsm, name="lvsm", port=args.port)
