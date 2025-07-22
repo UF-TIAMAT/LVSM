@@ -160,23 +160,11 @@ class LVSMModel:
         self.config.inference.render_video=True
         self.config.inference_out_dir="./experiments/evaluation/test"
 
-        dataset_name =  self.config.training.get("dataset_name", "data.dataset.Dataset")
-        module, class_name = dataset_name.rsplit(".", 1)
-        Dataset = importlib.import_module(module).__dict__[class_name]
-        dataset = Dataset( self.config)
+        
 
         self.config.training.batch_size_per_gpu = 1
 
-        self.dataloader = DataLoader(
-            dataset,
-            batch_size= self.config.training.batch_size_per_gpu,
-            shuffle=False,
-            num_workers= self.config.training.num_workers,
-            prefetch_factor= self.config.training.prefetch_factor,
-            persistent_workers=True,
-            pin_memory=False,
-            drop_last=True,
-        )
+        
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -194,6 +182,24 @@ class LVSMModel:
             dtype=self.amp_dtype_mapping[ self.config.training.amp_dtype],
         ):
             
+            dataset_name =  self.config.training.get("dataset_name", "data.dataset.Dataset")
+            module, class_name = dataset_name.rsplit(".", 1)
+            
+            Dataset = importlib.import_module(module).__dict__[class_name]
+            dataset = Dataset(self.config)
+            
+            self.dataloader = DataLoader(
+            dataset,
+            batch_size= self.config.training.batch_size_per_gpu,
+            shuffle=False,
+            num_workers= self.config.training.num_workers,
+            prefetch_factor= self.config.training.prefetch_factor,
+            persistent_workers=False,
+            pin_memory=False,
+            drop_last=True,
+            )
+            
+
             for batch in self.dataloader:
                 batch = {k: v.to(self.device) if type(v) == torch.Tensor else v for k, v in batch.items()}
                 result = self.model(batch)
